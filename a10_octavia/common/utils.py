@@ -78,6 +78,28 @@ def validate_params(hardware_info):
                                    'under [hardware_thunder] section cannot be None ')
 
 
+def validate_interface_vlan_map(hardware_device):
+    if 'interface_vlan_map' not in hardware_device:
+        return True
+
+    ivmap = hardware_device.get('interface_vlan_map')
+    for ifnum in ivmap:
+        if_info = ivmap[ifnum]
+        for vlan_id in if_info:
+            ve_info = if_info[vlan_id]
+            if ve_info.get('use_dhcp') and ve_info.get('ve_ip_address'):
+                raise cfg.ConfigFileValueError('Check settings for vlan ' + vlan_id +
+                                               '. Please do not set ve_ip_address in '
+                                               'interface_vlan_map when use_dhcp is True')
+                if not ve_info.get('use_dhcp'):
+                    if not ve_info.get('ve_ip_address'):
+                        raise cfg.ConfigFileValueError('Check settings for vlan ' + vlan_id +
+                                                       '. Please set valid ve_ip_address in '
+                                                       'interface_vlan_map when use_dhcp is False')
+                    validate_partial_ipv4(ve_info['ve_ip_address'])
+    return True
+
+
 def check_duplicate_entries(hardware_dict):
     hardware_count_dict = {}
     for hardware_device in hardware_dict.values():
@@ -95,6 +117,7 @@ def convert_to_hardware_thunder_conf(hardware_list):
             raise cfg.ConfigFileValueError('Supplied duplicate project_id ' +
                                            hardware_device['project_id'] +
                                            ' in [hardware_thunder] section')
+        validate_interface_vlan_map(hardware_device)
         hardware_device['undercloud'] = True
         vthunder_conf = data_models.VThunder(**hardware_device)
         hardware_dict[hardware_device['project_id']] = vthunder_conf

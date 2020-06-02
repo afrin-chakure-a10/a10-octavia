@@ -13,6 +13,7 @@
 #    under the License.
 
 
+from oslo_config import cfg
 from taskflow.patterns import linear_flow
 from taskflow.patterns import unordered_flow
 
@@ -28,6 +29,8 @@ from a10_octavia.controller.worker.tasks import a10_database_tasks
 from a10_octavia.controller.worker.tasks import a10_network_tasks
 from a10_octavia.controller.worker.tasks import server_tasks
 from a10_octavia.controller.worker.tasks import vthunder_tasks
+
+CONF = cfg.CONF
 
 
 class MemberFlows(object):
@@ -122,6 +125,10 @@ class MemberFlows(object):
             requires=(constants.MEMBER, a10constants.VTHUNDER, constants.POOL)))
         delete_member_flow.add(database_tasks.DecrementMemberQuota(
             requires=constants.MEMBER))
+        if CONF.a10_global.network_type == 'vlan':
+            delete_member_flow.add(vthunder_tasks.DeleteEthernetTagIfNotInUseForMember(
+                requires=[constants.MEMBER,
+                          a10constants.VTHUNDER]))
         delete_member_flow.add(database_tasks.MarkPoolActiveInDB(
             requires=constants.POOL))
         delete_member_flow.add(database_tasks.
@@ -151,6 +158,9 @@ class MemberFlows(object):
             requires=(constants.MEMBER, a10constants.VTHUNDER)))
         update_member_flow.add(database_tasks.UpdateMemberInDB(
             requires=[constants.MEMBER, constants.UPDATE_DICT]))
+        if CONF.a10_global.network_type == 'vlan':
+            update_member_flow.add(vthunder_tasks.TagEthernetForMember(
+                requires=[constants.MEMBER, a10constants.VTHUNDER]))
         update_member_flow.add(database_tasks.MarkMemberActiveInDB(
             requires=constants.MEMBER))
         update_member_flow.add(database_tasks.MarkPoolActiveInDB(
@@ -267,6 +277,10 @@ class MemberFlows(object):
         create_member_flow.add(a10_database_tasks.GetVThunderByLoadBalancer(
             requires=constants.LOADBALANCER,
             provides=a10constants.VTHUNDER))
+        if CONF.a10_global.network_type == 'vlan':
+            create_member_flow.add(vthunder_tasks.TagEthernetForMember(
+                requires=[constants.MEMBER,
+                          a10constants.VTHUNDER]))
         create_member_flow.add(server_tasks.MemberCreate(
             requires=(constants.MEMBER, a10constants.VTHUNDER, constants.POOL)))
         create_member_flow.add(database_tasks.MarkMemberActiveInDB(
