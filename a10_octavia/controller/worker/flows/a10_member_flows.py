@@ -185,6 +185,27 @@ class MemberFlows(object):
             requires=[a10constants.VRID, a10constants.DELETE_VRID]))
         return delete_member_vrid_subflow
 
+    def get_delete_member_vrid_internal_subflow(self, member_id):
+        delete_member_vrid_subflow = linear_flow.Flow(a10constants.DELETE_MEMBER_VRID_SUBFLOW)
+        delete_member_vrid_subflow.add(a10_database_tasks.CountMembersInProject(
+                                   name = 'count_members_in_project_' + member_id,
+                                   requires=constants.MEMBER,
+                                   provides=a10constants.MEMBER_COUNT))
+        delete_member_vrid_subflow.add(a10_database_tasks.GetVRIDForProjectMember(
+            name = 'get_vrid_for_project_member_' + member_id,
+            requires=constants.MEMBER,
+            provides=a10constants.VRID,
+            rebind={constants.MEMBER: member_id}))
+        delete_member_vrid_subflow.add(a10_network_tasks.DeleteMemberVRIDPort(
+            name = 'delete_member_vrid_port_' + member_id,
+            requires=[a10constants.VTHUNDER, a10constants.VRID, a10constants.MEMBER_COUNT],
+            provides=a10constants.DELETE_VRID,
+            rebind={constants.MEMBER: member_id}))
+        delete_member_vrid_subflow.add(a10_database_tasks.DeleteVRIDEntry(
+            name = 'delete_vrid_entry_' + member_id,
+            requires=[a10constants.VRID, a10constants.DELETE_VRID]))
+        return delete_member_vrid_subflow
+
     def get_update_member_flow(self):
         """Create a flow to update a member
 
