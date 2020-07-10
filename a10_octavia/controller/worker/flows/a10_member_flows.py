@@ -147,7 +147,8 @@ class MemberFlows(object):
         return delete_member_flow
 
     def get_delete_member_vthunder_subflow(self):
-        delete_member_vthunder_subflow = linear_flow.Flow(a10constants.DELETE_MEMBER_VTHUNDER_SUBFLOW)
+        delete_member_vthunder_subflow = linear_flow.Flow(
+            a10constants.DELETE_MEMBER_VTHUNDER_SUBFLOW)
         delete_member_vthunder_subflow.add(server_tasks.MemberDelete(
             requires=(constants.MEMBER, a10constants.VTHUNDER, constants.POOL)))
         if CONF.a10_global.network_type == 'vlan':
@@ -156,53 +157,53 @@ class MemberFlows(object):
         return delete_member_vthunder_subflow
 
     def get_delete_member_vthunder_internal_subflow(self, member_id):
-        delete_member_thunder_subflow = linear_flow.Flow(a10constants.DELETE_MEMBER_VTHUNDER_SUBFLOW)
+        delete_member_thunder_subflow = linear_flow.Flow(
+            a10constants.DELETE_MEMBER_VTHUNDER_SUBFLOW)
         delete_member_thunder_subflow.add(vthunder_tasks.SetupDeviceNetworkMap(
-            name = 'setup_device_network_map_' + member_id,
+            name='setup_device_network_map_' + member_id,
             requires=a10constants.VTHUNDER,
             provides=a10constants.VTHUNDER))
         delete_member_thunder_subflow.add(server_tasks.MemberDelete(
-            name = 'delete_thunder_member_' + member_id,
+            name='delete_thunder_member_' + member_id,
             requires=(constants.MEMBER, a10constants.VTHUNDER, constants.POOL),
             rebind={constants.MEMBER: member_id}))
         if CONF.a10_global.network_type == 'vlan':
             delete_member_thunder_subflow.add(vthunder_tasks.DeleteInterfaceTagIfNotInUseForMember(
-                name = 'delete_unused_interface_tag_in_member_' + member_id,
-                requires=[constants.MEMBER,a10constants.VTHUNDER],
+                name='delete_unused_interface_tag_in_member_' + member_id,
+                requires=[constants.MEMBER, a10constants.VTHUNDER],
                 rebind={constants.MEMBER: member_id}))
-                 
+
         return delete_member_thunder_subflow
 
     def get_delete_member_vrid_subflow(self):
-        delete_member_vrid_subflow = linear_flow.Flow(a10constants.DELETE_MEMBER_VRID_SUBFLOW)
+        delete_member_vrid_subflow = linear_flow.Flow(
+            a10constants.DELETE_MEMBER_VRID_SUBFLOW)
         delete_member_vrid_subflow.add(a10_database_tasks.GetVRIDForProjectMember(
             requires=constants.MEMBER,
             provides=a10constants.VRID))
         delete_member_vrid_subflow.add(a10_network_tasks.DeleteMemberVRIDPort(
-            requires=[a10constants.VTHUNDER, a10constants.VRID, a10constants.MEMBER_COUNT],
+            requires=[a10constants.VTHUNDER,
+                      a10constants.VRID, a10constants.MEMBER_COUNT],
             provides=a10constants.DELETE_VRID))
         delete_member_vrid_subflow.add(a10_database_tasks.DeleteVRIDEntry(
             requires=[a10constants.VRID, a10constants.DELETE_VRID]))
         return delete_member_vrid_subflow
 
     def get_delete_member_vrid_internal_subflow(self, member_id):
-        delete_member_vrid_subflow = linear_flow.Flow(a10constants.DELETE_MEMBER_VRID_SUBFLOW)
-        delete_member_vrid_subflow.add(a10_database_tasks.CountMembersInProject(
-                                   name = 'count_members_in_project_' + member_id,
-                                   requires=constants.MEMBER,
-                                   provides=a10constants.MEMBER_COUNT))
+        delete_member_vrid_subflow = linear_flow.Flow(
+            a10constants.DELETE_MEMBER_VRID_SUBFLOW)
         delete_member_vrid_subflow.add(a10_database_tasks.GetVRIDForProjectMember(
-            name = 'get_vrid_for_project_member_' + member_id,
+            name='get_vrid_for_project_member_' + member_id,
             requires=constants.MEMBER,
             provides=a10constants.VRID,
             rebind={constants.MEMBER: member_id}))
         delete_member_vrid_subflow.add(a10_network_tasks.DeleteMemberVRIDPort(
-            name = 'delete_member_vrid_port_' + member_id,
-            requires=[a10constants.VTHUNDER, a10constants.VRID, a10constants.MEMBER_COUNT],
-            provides=a10constants.DELETE_VRID,
-            rebind={constants.MEMBER: member_id}))
+            name='delete_member_vrid_port_' + member_id,
+            requires=[a10constants.VTHUNDER,
+                      a10constants.VRID, a10constants.MEMBER_COUNT],
+            provides=a10constants.DELETE_VRID))
         delete_member_vrid_subflow.add(a10_database_tasks.DeleteVRIDEntry(
-            name = 'delete_vrid_entry_' + member_id,
+            name='delete_vrid_entry_' + member_id,
             requires=[a10constants.VRID, a10constants.DELETE_VRID]))
         return delete_member_vrid_subflow
 
@@ -230,7 +231,8 @@ class MemberFlows(object):
             requires=constants.MEMBER,
             provides=a10constants.VRID))
         update_member_flow.add(a10_network_tasks.HandleVRIDFloatingIP(
-            requires=[constants.MEMBER, a10constants.VTHUNDER, a10constants.VRID],
+            requires=[constants.MEMBER,
+                      a10constants.VTHUNDER, a10constants.VRID],
             provides=a10constants.PORT))
         update_member_flow.add(a10_database_tasks.UpdateVRIDForProjectMember(
             requires=[constants.MEMBER, a10constants.VRID, a10constants.PORT]))
@@ -367,7 +369,8 @@ class MemberFlows(object):
             requires=constants.MEMBER,
             provides=a10constants.VRID))
         create_member_flow.add(a10_network_tasks.HandleVRIDFloatingIP(
-            requires=[constants.MEMBER, a10constants.VTHUNDER, a10constants.VRID],
+            requires=[constants.MEMBER,
+                      a10constants.VTHUNDER, a10constants.VRID],
             provides=a10constants.PORT))
         create_member_flow.add(a10_database_tasks.UpdateVRIDForProjectMember(
             requires=[constants.MEMBER, a10constants.VRID, a10constants.PORT]))

@@ -56,7 +56,7 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
         self._lb_repo = repo.LoadBalancerRepository()
         self._listener_repo = repo.ListenerRepository()
         self._pool_repo = repo.PoolRepository()
-        self._member_repo = repo.MemberRepository()
+        self._member_repo = a10repo.MemberRepository()
         self._health_mon_repo = repo.HealthMonitorRepository()
         self._l7policy_repo = repo.L7PolicyRepository()
         self._l7rule_repo = repo.L7RuleRepository()
@@ -427,7 +427,8 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
                     constants.POOL: pool})
         else:
             create_member_tf = self._taskflow_load(self._member_flows.
-                                                   get_create_member_flow(topology=topology),
+                                                   get_create_member_flow(
+                                                       topology=topology),
                                                    store={constants.MEMBER: member,
                                                           constants.LISTENERS:
                                                           listeners,
@@ -554,12 +555,17 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
         listeners = pool.listeners
         members = pool.members
         health_monitor = pool.health_monitor
-        store={constants.POOL: pool, constants.LISTENERS: listeners,
-                   constants.LOADBALANCER: load_balancer,
-                   constants.HEALTH_MON: health_monitor}
-
+        mem_count = self._member_repo.get_member_count(
+            db_apis.get_session(),
+            project_id=pool.project_id)
+        mem_count = mem_count - len(members) + 1
+        store = {constants.POOL: pool, constants.LISTENERS: listeners,
+                 constants.LOADBALANCER: load_balancer,
+                 constants.HEALTH_MON: health_monitor,
+                 a10constants.MEMBER_COUNT: mem_count}
         delete_pool_tf = self._taskflow_load(
-            self._pool_flows.get_delete_pool_flow(members, health_monitor, store),
+            self._pool_flows.get_delete_pool_flow(
+                members, health_monitor, store),
             store=store)
         with tf_logging.DynamicLoggingListener(delete_pool_tf,
                                                log=LOG):
@@ -807,7 +813,8 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
                                          "ip_address": vthunder.ip_address}]}
                 LOG.info(str(status))
             else:
-                LOG.warning("No backup found for failed MASTER %s", vthunder.ip_address)
+                LOG.warning("No backup found for failed MASTER %s",
+                            vthunder.ip_address)
 
         elif vthunder.role == constants.ROLE_BACKUP:
             LOG.info("BACKUP vThunder %s has failed", vthunder.ip_address)

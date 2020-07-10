@@ -91,8 +91,10 @@ class PoolFlows(object):
         delete_pool_flow.add(persist_tasks.DeleteSessionPersistence(
             requires=[a10constants.VTHUNDER, constants.POOL]))
         # Delete pool children
-        delete_pool_flow.add(self._get_delete_health_monitor_vthunder_subflow(health_mon))
-        delete_pool_flow.add(self._get_delete_member_vthunder_subflow(members, store))
+        delete_pool_flow.add(
+            self._get_delete_health_monitor_vthunder_subflow(health_mon))
+        delete_pool_flow.add(
+            self._get_delete_member_vthunder_subflow(members, store))
 
         delete_pool_flow.add(service_group_tasks.PoolDelete(
             requires=[constants.POOL, a10constants.VTHUNDER]))
@@ -110,17 +112,21 @@ class PoolFlows(object):
     def _get_delete_health_monitor_vthunder_subflow(self, health_mon):
         delete_hm_vthunder_subflow = linear_flow.Flow('hm_delete_subflow')
         if health_mon:
-            delete_hm_vthunder_subflow.add(self.hm_flow.get_delete_health_monitor_vthunder_subflow())
+            delete_hm_vthunder_subflow.add(
+                self.hm_flow.get_delete_health_monitor_vthunder_subflow())
         return delete_hm_vthunder_subflow
 
     def _get_delete_member_vthunder_subflow(self, members, store):
-        delete_member_vthunder_subflow = linear_flow.Flow('members_delete_subflow')
+        delete_member_vthunder_subflow = linear_flow.Flow(
+            'members_delete_subflow')
         member_store = {}
+        for member in members:
+            member_store[member.id] = member
+            delete_member_vthunder_subflow.add(
+                self.member_flow.get_delete_member_vthunder_internal_subflow(member.id))
         if members:
-            for member in members:
-                member_store[member.id] = member
-                delete_member_vthunder_subflow.add(self.member_flow.get_delete_member_vthunder_internal_subflow(member.id))
-                delete_member_vthunder_subflow.add(self.member_flow.get_delete_member_vrid_internal_subflow(member.id))
+            delete_member_vthunder_subflow.add(
+                self.member_flow.get_delete_member_vrid_internal_subflow(members[-1].id))
         store.update(member_store)
         return delete_member_vthunder_subflow
 
@@ -171,7 +177,8 @@ class PoolFlows(object):
             requires=constants.LOADBALANCER,
             provides=a10constants.VTHUNDER))
         update_pool = service_group_tasks.PoolUpdate(
-            requires=[constants.POOL, a10constants.VTHUNDER, constants.UPDATE_DICT],
+            requires=[constants.POOL, a10constants.VTHUNDER,
+                      constants.UPDATE_DICT],
             provides=constants.POOL)
         update_pool_flow.add(*self._get_sess_pers_subflow(update_pool))
         update_pool_flow.add(virtual_port_tasks.ListenersUpdate(
@@ -188,7 +195,8 @@ class PoolFlows(object):
         return update_pool_flow
 
     def _get_sess_pers_subflow(self, pool_task):
-        get_pool_create_with_sess_pers = graph_flow.Flow(a10constants.HANDLE_SESS_PERS)
+        get_pool_create_with_sess_pers = graph_flow.Flow(
+            a10constants.HANDLE_SESS_PERS)
         sess_pers = persist_tasks.HandleSessionPersistenceDelta(
             requires=[a10constants.VTHUNDER, constants.POOL])
         get_pool_create_with_sess_pers.add(pool_task, sess_pers)
