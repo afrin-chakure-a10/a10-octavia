@@ -43,6 +43,13 @@ class CreateAndAssociateHealthMonitor(task.Task):
             expect_code = health_mon.expected_codes
         args = utils.meta(health_mon, 'hm', {})
 
+        if health_mon.delay < health_mon.timeout:
+            LOG.warning(
+                "Interval should be greater than or equal to timeout. Reverting to default values. "
+                "Setting interval to 10 seconds and timeout to 3 seconds.")
+            health_mon.delay = 10
+            health_mon.timeout = 3
+
         try:
             self.axapi_client.slb.hm.create(health_mon.id,
                                             openstack_mappings.hm_type(self.axapi_client,
