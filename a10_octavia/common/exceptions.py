@@ -19,6 +19,8 @@ from octavia.common import exceptions
 from octavia.i18n import _
 from octavia.network import base
 
+import acos_client.errors as acos_errors
+
 
 class NoDatabaseURL(exceptions.OctaviaException):
     message = _("Must set db connection url in configuration file.")
@@ -140,8 +142,25 @@ class InvalidVCSDeviceCount(cfg.ConfigFileValueError):
         super(InvalidVCSDeviceCount, self).__init__(msg=msg)
 
 
+class IpAddressPartitionCollisionInProjectError(cfg.ConfigFileValueError):
+
+    def __init__(self, config_ip_part, existing_ip_part, project_id):
+        msg = ('Given IPAddress:Partition `{0}` in a10-octavia.conf is invalid. '
+               'There is an existing IPAddress:Partition `{1}` in use for project {2}.').format(
+            config_ip_part, existing_ip_part, project_id)
+        super(IpAddressPartitionCollisionInProjectError, self).__init__(msg=msg)
+
+
 class MissingVCSDeviceConfig(base.NetworkException):
     def __init__(self, device_ids):
         msg = ('Device ids {0} provided in config are not present in VCS' +
                'cluster.').format(device_ids)
         super(MissingVCSDeviceConfig, self).__init__(msg=msg)
+
+
+class SNATConfigurationError(acos_errors.ACOSException):
+    def __init__(self):
+        msg = ('SNAT configuration does not work in DSR mode on Thunder '
+               ' `autosnat` and `no_dest_nat` both are set True under `[listener]` '
+               'section in a10-octavia.conf. ')
+        super(SNATConfigurationError, self).__init__(msg=msg)
