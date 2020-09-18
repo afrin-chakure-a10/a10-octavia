@@ -78,7 +78,11 @@ class LoadBalancerFlows(object):
             requires=(constants.LOADBALANCER,
                            a10constants.VTHUNDER)))
         lb_create_flow.add(vthunder_tasks.WriteMemory(
-            requires=a10constants.VTHUNDER))
+            name=a10constants.WRITE_MEM_FOR_LOCAL_PARTITION,
+            requires=(a10constants.VTHUNDER, a10constants.WRITE_MEM_SHARED_PART)))
+        lb_create_flow.add(vthunder_tasks.WriteMemory(
+            name=a10constants.WRITE_MEM_FOR_SHARED_PARTITION,
+            requires=(a10constants.VTHUNDER)))
         return lb_create_flow
 
     def _create_single_topology(self):
@@ -191,7 +195,11 @@ class LoadBalancerFlows(object):
         delete_LB_flow.add(database_tasks.DecrementLoadBalancerQuota(
             requires=constants.LOADBALANCER))
         delete_LB_flow.add(vthunder_tasks.WriteMemory(
-            requires=a10constants.VTHUNDER))
+            name=a10constants.WRITE_MEM_FOR_LOCAL_PARTITION,
+            requires=(a10constants.VTHUNDER, a10constants.WRITE_MEM_SHARED_PART)))
+        delete_LB_flow.add(vthunder_tasks.WriteMemory(
+            name=a10constants.WRITE_MEM_FOR_SHARED_PARTITION,
+            requires=(a10constants.VTHUNDER)))
         return (delete_LB_flow, store)
 
     def get_new_lb_networking_subflow(self, topology):
@@ -278,7 +286,11 @@ class LoadBalancerFlows(object):
         update_LB_flow.add(database_tasks.MarkLBActiveInDB(
             requires=constants.LOADBALANCER))
         update_LB_flow.add(vthunder_tasks.WriteMemory(
-            requires=a10constants.VTHUNDER))
+            name=a10constants.WRITE_MEM_FOR_LOCAL_PARTITION,
+            requires=(a10constants.VTHUNDER, a10constants.WRITE_MEM_SHARED_PART)))
+        update_LB_flow.add(vthunder_tasks.WriteMemory(
+            name=a10constants.WRITE_MEM_FOR_SHARED_PARTITION,
+            requires=(a10constants.VTHUNDER)))
         return update_LB_flow
 
     def get_create_rack_vthunder_load_balancer_flow(self, vthunder_conf, topology, listeners=None):

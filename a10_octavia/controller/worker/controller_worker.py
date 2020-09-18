@@ -300,7 +300,8 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
 
         store = {constants.LOADBALANCER_ID: load_balancer_id,
                  constants.BUILD_TYPE_PRIORITY:
-                 constants.LB_CREATE_NORMAL_PRIORITY}
+                 constants.LB_CREATE_NORMAL_PRIORITY,
+                 a10constants.WRITE_MEM_SHARED_PART: True}
 
         topology = CONF.a10_controller_worker.loadbalancer_topology
 
@@ -336,7 +337,8 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
                                                                         vthunder.compute_id)
         (flow, store) = self._lb_flows.get_delete_load_balancer_flow(lb, deleteCompute)
         store.update({constants.LOADBALANCER: lb,
-                      constants.SERVER_GROUP_ID: lb.server_group_id})
+                      constants.SERVER_GROUP_ID: lb.server_group_id,
+                      a10constants.WRITE_MEM_SHARED_PART: True})
 
         delete_lb_tf = self._taskflow_load(flow, store=store)
 
@@ -367,6 +369,7 @@ class A10ControllerWorker(base_taskflow.BaseTaskFlowEngine):
             self._lb_flows.get_update_load_balancer_flow(),
             store={constants.LOADBALANCER: lb,
                    constants.LISTENERS: listeners,
+                   a10constants.WRITE_MEM_SHARED_PART: True,
                    constants.UPDATE_DICT: load_balancer_updates})
 
         with tf_logging.DynamicLoggingListener(update_lb_tf,
