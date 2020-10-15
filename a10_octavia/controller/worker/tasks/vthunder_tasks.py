@@ -596,6 +596,7 @@ class TagInterfaceBaseTask(VThunderBaseTask):
             LOG.warning('Settings for vlan id %s is not present in `a10-octavia.conf`',
                         str(create_vlan_id))
 
+
     def tag_interfaces(self, vthunder, create_vlan_id):
         if vthunder and vthunder.device_network_map:
             network_list = self.network_driver.list_networks()
@@ -643,8 +644,44 @@ class TagInterfaceBaseTask(VThunderBaseTask):
 
         return True
 
+    def get_interface_info(interfaces_info):
+        pass
+
+    @device_context_switch_decorator
+    def tag_device_intf(vthunder, vlan_id, device_obj, device_id=None, master_device_id=None):
+        self.get_interface_info(device_obj.trunk_interfaces)
+        self.get_interface_info(device_obj.ethernet_interfaces)
+
+    def tag_trunk_interfaces(vthunder, lb_subnet_id):
+        vlan_id = self.get_vlan_id(lb_subnet_id, False)
+        master_device_id = vthunder.device_network_map[0].vcs_device_id
+        if vthunder and vthunder.device_network_map:
+            for device_obj in vthunder.device_network_map:
+                try:
+                    self.tag_device_intf(vthunder, vlan_id, device_obj, device_id=device_obj.vcs_device_id,
+                            master_device_id=master_device_id)
+                except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
+                    if master_device_id != device_obj.vcs_device_id:
+                        LOG.warning("Failed to tag interfaces of device id %s: %s",
+                                    str(device_obj.vcs_device_id), str(e))
+                    else:
+                        raise e
+
 
 class TagInterfaceForLB(TagInterfaceBaseTask):
+
+    @axapi_client_decorator
+    def execute(self, loadbalancer, vthunder):
+        try:
+            is_ve_ip = self.tag_trunk_interfaces(vthunder, loadbalancer.vip.subnet_id)
+            if is_ve_ip:
+                self.tag_ethernet_interface(vthunder, loadbalancer.vip.subnet_id)
+        except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
+            LOG.exception("Failed to TagEthernetInterfaceForLB: %s", str(e))
+            raise e
+
+
+class TagInterfaceForLB_(TagInterfaceBaseTask):
     """Task to tag Ethernet/Trunk Interface on a vThunder device from lb subnet"""
 
     @axapi_client_decorator
