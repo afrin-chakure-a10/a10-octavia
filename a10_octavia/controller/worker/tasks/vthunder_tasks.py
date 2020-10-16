@@ -644,13 +644,29 @@ class TagInterfaceBaseTask(VThunderBaseTask):
 
         return True
 
-    def get_interface_info(interfaces_info):
-        pass
+    def get_interface_info(interfaces_info, vlan_id):
+        tags = []
+        ve_ips = []
+        for intf in interfaces_info:
+            assert len(intf.tags) == len(intf.ve_ips)
+            for i in range(len(intf.tags)):
+                if str(intf.tags[i]) == "0":
+                    str(intf.tags[i]) = str(vlan_id)
+                tags.append(str(intf.tags[i]))
+                ve_ips.append(intf.ve_ips[i])
+        return (tags, ve_ips)
 
     @device_context_switch_decorator
     def tag_device_intf(vthunder, vlan_id, device_obj, device_id=None, master_device_id=None):
-        self.get_interface_info(device_obj.trunk_interfaces)
-        self.get_interface_info(device_obj.ethernet_interfaces)
+        trunk_tags, trunk_ve_ips = self.get_interface_info(device_obj.trunk_interfaces, vlan_id)
+        eth_tags, eth_ve_ips = self.get_interface_info(device_obj.ethernet_interfaces, vlan_id)
+        for trunk in device_obj.trunk_interfaces:
+            self.tag_intf(True, trunk_tags[i++], str(trunk_interface.interface_num),
+                    trunk_ve_ips[i++], vthunder, device_id=device_id)
+
+        if str(vlan_id) not in trunk_tags or str(vlan_id) not in eth_tags:
+            LOG.warning('Settings for vlan id %s is not present in `a10-octavia.conf`',
+                        str(vlan_id))
 
     def tag_trunk_interfaces(vthunder, lb_subnet_id):
         vlan_id = self.get_vlan_id(lb_subnet_id, False)
@@ -673,9 +689,7 @@ class TagInterfaceForLB(TagInterfaceBaseTask):
     @axapi_client_decorator
     def execute(self, loadbalancer, vthunder):
         try:
-            is_ve_ip = self.tag_trunk_interfaces(vthunder, loadbalancer.vip.subnet_id)
-            if is_ve_ip:
-                self.tag_ethernet_interface(vthunder, loadbalancer.vip.subnet_id)
+            self.tag_trunk_interfaces(vthunder, loadbalancer.vip.subnet_id)
         except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
             LOG.exception("Failed to TagEthernetInterfaceForLB: %s", str(e))
             raise e

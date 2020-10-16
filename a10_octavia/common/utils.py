@@ -244,6 +244,7 @@ def convert_interface_to_data_model(interface_obj):
             interface_dm.tags.append(vlan_id)
     else:
         if ve_ip:
+            interface_dm.tags.append("0")
             interface_dm.ve_ips.append(validate_partial_ipv4(ve_ip))
         else:
             LOG.warning("Empty vlan map or empty ve_ip value provided in configuration file")
