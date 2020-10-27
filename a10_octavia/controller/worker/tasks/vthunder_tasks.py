@@ -526,13 +526,13 @@ class TagInterfaceBaseTask(VThunderBaseTask):
             self.axapi_client.vlan.delete(vlan_id)
 
     def tag_interface(self, is_trunk, create_vlan_id, vlan_id, ifnum, ve_info,
-                      vlan_subnet_id_dict, vthunder, device_id=None, master_device_id=None):
-        if vlan_id not in vlan_subnet_id_dict:
-            LOG.warning("vlan_id %s not in vlan_subnet_id_dict %s", vlan_id,
-                        vlan_subnet_id_dict)
-            return None
+                      vlan_subnet_id, vthunder, device_id=None, master_device_id=None):
+        #if vlan_id not in vlan_subnet_id_dict:
+        #    LOG.warning("vlan_id %s not in vlan_subnet_id_dict %s", vlan_id,
+        #                vlan_subnet_id_dict)
+        #    return None
 
-        self.get_subnet_and_mask(vlan_subnet_id_dict[vlan_id])
+        self.get_subnet_and_mask(vlan_subnet_id)
 
         if not is_trunk:
             current_partition = self.axapi_client.current_partition
@@ -558,7 +558,7 @@ class TagInterfaceBaseTask(VThunderBaseTask):
                 self.axapi_client.vlan.create(vlan_id, tagged_eths=[ifnum], veth=True)
                 LOG.debug("Tagged trunk interface %s with VLAN with id %s", ifnum, vlan_id)
         else:
-            self.release_ve_ip_from_neutron(vlan_id, vlan_subnet_id_dict[vlan_id], vthunder,
+            self.release_ve_ip_from_neutron(vlan_id, vlan_subnet_id, vthunder,
                                             device_id)
 
         ve_ip_exist = self.check_ve_ip_exists(vlan_id, ve_info)
@@ -570,46 +570,65 @@ class TagInterfaceBaseTask(VThunderBaseTask):
                 patched_ip = self._get_patched_ve_ip(ve_info)
                 self.axapi_client.interface.ve.create(vlan_id, ip_address=patched_ip,
                                                       ip_netmask=self._subnet_mask, enable=True)
-        self.reserve_ve_ip_with_neutron(vlan_id, vlan_subnet_id_dict[vlan_id], vthunder,
+        self.reserve_ve_ip_with_neutron(vlan_id, vlan_subnet_id, vthunder,
                                         device_id)
 
     @device_context_switch_decorator
-    def tag_device_interfaces(self, create_vlan_id, vlan_subnet_id_dict, device_obj,
+    def tag_device_interfaces_for_trunk(self, create_vlan_id, device_obj, vlan_subnet_id,
                               vthunder, device_id=None, master_device_id=None):
+        all_vlan_ids = []
+        for trunk_interface in device_obj.trunk_interfaces:
+            ifnum = str(trunk_interface.interface_num)
+            assert len(trunk_interface.tags) == len(trunk_interface.ve_ips)
+            for i in range(len(trunk_interface.tags)):
+                if str(trunk_interface.tags[i]) == '0':
+                    tag = str(create_vlan_id)
+                else:
+                    tag = str(trunk_interface.tags[i])
+                all_vlan_ids.append(tag)
+                ve_ip = trunk_interface.ve_ips[i]
+                self.tag_interface(True, create_vlan_id, tag, ifnum, ve_ip,
+                                   vlan_subnet_id, vthunder, device_id=device_id)
+        return all_vlan_ids
+
+    @device_context_switch_decorator
+    def tag_device_interfaces_for_ethernet(self, create_vlan_id, device_obj, vlan_subnet_id,
+                                           vthunder, device_id=None, master_device_id=None):
         all_vlan_ids = []
         for eth_interface in device_obj.ethernet_interfaces:
             ifnum = str(eth_interface.interface_num)
             assert len(eth_interface.tags) == len(eth_interface.ve_ips)
             for i in range(len(eth_interface.tags)):
-                tag = str(eth_interface.tags[i])
+                if str(eth_interface.tags[i]) == '0':
+                    tag = str(create_vlan_id)
+                else:
+                    tag = str(eth_interface.tags[i])
                 all_vlan_ids.append(tag)
                 ve_ip = eth_interface.ve_ips[i]
                 self.tag_interface(False, create_vlan_id, tag, ifnum, ve_ip,
-                                   vlan_subnet_id_dict, vthunder, device_id=device_id)
-        for trunk_interface in device_obj.trunk_interfaces:
-            ifnum = str(trunk_interface.interface_num)
-            assert len(trunk_interface.tags) == len(trunk_interface.ve_ips)
-            for i in range(len(trunk_interface.tags)):
-                tag = str(trunk_interface.tags[i])
-                all_vlan_ids.append(tag)
-                ve_ip = trunk_interface.ve_ips[i]
-                self.tag_interface(True, create_vlan_id, tag, ifnum, ve_ip,
-                                   vlan_subnet_id_dict, vthunder, device_id=device_id)
-        if str(create_vlan_id) not in all_vlan_ids:
+                                   vlan_subnet_id, vthunder, device_id=device_id)
+        return all_vlan_ids
+
+    def tag_device_interfaces(self, create_vlan_id, device_obj, vlan_subnet_id,
+                              vthunder, device_id=None, master_device_id=None):
+        trunk_vlan_ids = self.tag_device_interfaces_for_trunk(create_vlan_id, device_obj,
+                                                              vlan_subnet_id, 
+                                                              vthunder, device_id,
+                                                              master_device_id)
+        ethernet_vlan_ids = self.tag_device_interfaces_for_ethernet(create_vlan_id, device_obj,
+                                                                    vlan_subnet_id,
+                                                                    vthunder, device_id,
+                                                                    master_device_id)
+        if str(create_vlan_id) not in (ethernet_vlan_ids, trunk_vlan_ids):
             LOG.warning('Settings for vlan id %s is not present in `a10-octavia.conf`',
                         str(create_vlan_id))
 
-    def tag_interfaces(self, vthunder, create_vlan_id):
+    def tag_interfaces(self, vthunder, create_vlan_id, vlan_subnet_id):
         if vthunder and vthunder.device_network_map:
-            network_list = self.network_driver.list_networks()
-            vlan_subnet_id_dict = {}
-            for network in network_list:
-                vlan_id = network.provider_segmentation_id
-                vlan_subnet_id_dict[str(vlan_id)] = network.subnets[0]
             master_device_id = vthunder.device_network_map[0].vcs_device_id
             for device_obj in vthunder.device_network_map:
                 try:
-                    self.tag_device_interfaces(create_vlan_id, vlan_subnet_id_dict, device_obj,
+                    self.tag_device_interfaces(create_vlan_id, device_obj, vlan_subnet_id,
                                                vthunder, device_id=device_obj.vcs_device_id,
                                                master_device_id=master_device_id)
                 except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
@@ -654,7 +673,7 @@ class TagInterfaceForLB(TagInterfaceBaseTask):
     def execute(self, loadbalancer, vthunder):
         try:
             vlan_id = self.get_vlan_id(loadbalancer.vip.subnet_id, False)
-            self.tag_interfaces(vthunder, vlan_id)
+            self.tag_interfaces(vthunder, vlan_id, vlan_subnet_id=loadbalancer.vip.subnet_id)
         except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
             LOG.exception("Failed to TagInterfaceForLB: %s", str(e))
             raise e
