@@ -34,9 +34,6 @@ LOG = logging.getLogger(__name__)
 
 
 A10_GLOBAL_OPTS = [
-    cfg.BoolOpt('enable_hierarchical_multitenancy', default=False,
-                help=_('Enable Hierarchical Multitenancy '
-                       'for racked - hardware thunder devices.')),
     cfg.BoolOpt('use_parent_partition', default=False,
                 help=_('Use parent project partition on Thunder device '
                        'in hierarchical project architecture.')),
@@ -48,6 +45,9 @@ A10_GLOBAL_OPTS = [
                default=a10constants.FLAT,
                choices=a10constants.SUPPORTED_NETWORK_TYPE,
                help=_('Neutron ML2 Tenent Network Type')),
+    cfg.BoolOpt('use_shared_for_template_lookup',
+                default=False,
+                help=_('Use shared for template')),
 ]
 
 A10_VTHUNDER_OPTS = [
@@ -60,7 +60,6 @@ A10_VTHUNDER_OPTS = [
     cfg.IntOpt('default_axapi_version',
                default=30,
                help=_('VThunder axapi version')),
-
 ]
 
 A10_SLB_OPTS = [
@@ -71,6 +70,11 @@ A10_SLB_OPTS = [
                help=_('Default Virtual Server VRID')),
 ]
 
+A10_HEALTH_MONITOR_OPTS = [
+    cfg.StrOpt('post_data',
+               help=_('HTTP Content for "--http-method POST" case.')),
+]
+
 A10_LISTENER_OPTS = [
     cfg.BoolOpt('ipinip', default=False,
                 help=_('Enable IP in IP.')),
@@ -78,7 +82,7 @@ A10_LISTENER_OPTS = [
                 default=False,
                 help=_('Disable destination NAT')),
     cfg.BoolOpt('ha_conn_mirror',
-                default=False,
+                default=None,
                 help=_('Enable for HA Conn sync')),
     cfg.StrOpt('template_virtual_port',
                default=None,
@@ -130,7 +134,7 @@ A10_SERVER_OPTS = [
                default=64000000,
                help=_('Connection Limit')),
     cfg.IntOpt('conn_resume', min=1, max=1000000,
-               default=1,
+               default=None,
                help=_('Connection Resume')),
     cfg.StrOpt('template_server',
                default=None,
@@ -199,7 +203,6 @@ A10_HEALTH_MANAGER_OPTS = [
     cfg.IntOpt('heartbeat_interval',
                default=10,
                help=_('Sleep time between sending heartbeats.')),
-
 ]
 
 A10_CONTROLLER_WORKER_OPTS = [
@@ -324,6 +327,7 @@ cfg.CONF.register_cli_opts(A10_HEALTH_MANAGER_OPTS, group='a10_health_manager')
 cfg.CONF.register_opts(A10_NOVA_OPTS, group='a10_nova')
 cfg.CONF.register_opts(A10_VTHUNDER_OPTS, group='vthunder')
 cfg.CONF.register_opts(A10_SLB_OPTS, group='slb')
+cfg.CONF.register_opts(A10_HEALTH_MONITOR_OPTS, group='health_monitor')
 cfg.CONF.register_opts(A10_LISTENER_OPTS, group='listener')
 cfg.CONF.register_opts(A10_SERVICE_GROUP_OPTS, group='service_group')
 cfg.CONF.register_opts(A10_SERVER_OPTS, group='server')

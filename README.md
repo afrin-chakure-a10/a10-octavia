@@ -302,13 +302,13 @@ Note: If the option is set at the local and global level, then the local configu
 =======
 #### 3bc. Configuring VLAN and Virtual Ethernet for hardware devices
 
-In the VLAN Network setup, for configuring the VLAN and Virtual Ethernet(VE) interfaces in the hardware thunder device, `network_type` setting in `[A10_GLOBAL]` configuration section should be set to "vlan" string. VLAN and VE configuration for the ethernet interfaces or trunk interfaces should be specified in `interface_vlan_map` setting in the `[hardware_thunder]` device configuration section. The `interface_vlan_map` setting is a json map. For a single device it can have key "device_1" with data or two keys "device_1" and "device_2" for aVCS cluster device. While configuring aVCS cluster, floating IP must be provided in `ip_address` field and respective management IP for both devices in `mgmt_ip_address` fields. The `vcs_device_id` value must be provided as either 1 or 2 based on current aVCS cluster status.
+In the VLAN Network setup, for configuring the VLAN and Virtual Ethernet(VE) interfaces in the hardware thunder device, `network_type` setting in `[a10_global]` configuration section should be set to "vlan" string. VLAN and VE configuration for the ethernet interfaces or trunk interfaces should be specified in `interface_vlan_map` setting in the `[hardware_thunder]` device configuration section. The `interface_vlan_map` setting is a json map. For a single device it can have key "device_1" with data or two keys "device_1" and "device_2" for aVCS cluster device. While configuring aVCS cluster, VCS floating IP must be provided in `ip_address` field and respective management IP for both devices in `mgmt_ip_address` fields. The `vcs_device_id` value must be provided as either 1 or 2 based on current aVCS cluster status.
 
 ##### 3bca. Sample a10-octavia.conf for VLAN and VE settings
 
-```shell
 <pre>
-[a10_controller_worker]
+
+[a10_global]
 network_type = "vlan"
 
 [hardware_thunder]
@@ -402,8 +402,11 @@ These settings are added to the `a10-octavia.conf` file. They allow the operator
 #### Global section config example
 ```shell
 [a10_global]
-enable_hierarchical_multitenancy = False
-use_parent_partition = False
+network_type = vlan
+use_parent_partition = True
+
+[NOTE: Use this flag for allowing templates to be used from shared partition for attaching them to components in l3v partition]
+use_shared_for_template_lookup = True
 ```
 #### Loadbalancer/virtual server config example
 ```shell
@@ -539,7 +542,7 @@ mysql> DELETE FROM alembic_version;
 With `a10-octavia` installed, run the following command to register the services
 
 ```shell
-$ install-a10-octavia
+$ /path/to/a10-octavia/a10_octavia/install/install-a10-octavia-dev
 ```
 
 This will install systemd services with names - `a10-controller-worker.service`, `a10-health-manager.service` and `a10-house-keeper.service`.

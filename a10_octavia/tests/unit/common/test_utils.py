@@ -58,12 +58,28 @@ DUP_PARTITION_HARDWARE_INFO = {
     'username': 'abc',
     'password': 'abc'}
 
+HARDWARE_INFO_WITH_HMT_ENABLED = [{
+    'project_id': a10constants.MOCK_CHILD_PROJECT_ID,
+    'ip_address': '13.13.13.13',
+    'device_name': 'rack_thunder_3',
+    'username': 'usr',
+    'password': 'pwd',
+    'hierarchical_multitenancy': 'enable',
+    'partition_name': 'shared'
+}]
+
 VTHUNDER_1 = data_models.HardwareThunder(project_id="project-1", device_name="rack_thunder_1",
                                          undercloud=True, username="abc", password="abc",
                                          ip_address="10.10.10.10", partition_name="shared")
 VTHUNDER_2 = data_models.HardwareThunder(project_id="project-2", device_name="rack_thunder_2",
                                          undercloud=True, username="def", password="def",
                                          ip_address="12.12.12.12", partition_name="def-sample")
+VTHUNDER_3 = data_models.HardwareThunder(project_id=a10constants.MOCK_CHILD_PROJECT_ID,
+                                         device_name="rack_thunder_3",
+                                         undercloud=True, username="usr", password="pwd",
+                                         hierarchical_multitenancy='enable',
+                                         ip_address="13.13.13.13",
+                                         partition_name=a10constants.MOCK_CHILD_PARTITION)
 
 DUPLICATE_DICT = {'project_1': VTHUNDER_1,
                   'project_2': VTHUNDER_1}
@@ -82,10 +98,12 @@ DUPLICATE_PARTITION_HARDWARE_DEVICE_LIST = [DUP_PARTITION_HARDWARE_INFO, HARDWAR
 RESULT_HARDWARE_DEVICE_LIST = {'project-1': VTHUNDER_1,
                                'project-2': VTHUNDER_2}
 
+RESULT_HMT_HARDWARE_DEVICE_LIST = {a10constants.MOCK_CHILD_PROJECT_ID: VTHUNDER_3}
+
 INTERFACE_CONF = {"interface_num": 1,
                   "vlan_map": [
                       {"vlan_id": 11, "ve_ip": "10.20"},
-                      {"vlan_id": 12, "use_dhcp": True},
+                      {"vlan_id": 12, "use_dhcp": "True"},
                       {"vlan_id": 13, "ve_ip": "10.30"}]
                   }
 INTERFACE = data_models.Interface(interface_num=1, tags=[11, 12, 13], ve_ips=[
@@ -140,9 +158,9 @@ class TestUtils(base.BaseTaskTestCase):
         self.assertRaises(cfg.ConfigFileValueError, utils.validate_partial_ipv4, '10.333.11.10')
 
     def test_validate_partition_valid(self):
-        self.assertEqual(utils.validate_partition(HARDWARE_DEVICE), HARDWARE_DEVICE)
+        self.assertEqual(utils.validate_partition(HARDWARE_DEVICE), None)
         empty_hardware_device = {}
-        self.assertEqual(utils.validate_partition(empty_hardware_device), SHARED_HARDWARE_DEVICE)
+        self.assertEqual(utils.validate_partition(empty_hardware_device), None)
 
     def test_validate_partition_invalid(self):
         long_partition_hardware_device = copy.deepcopy(HARDWARE_DEVICE)
@@ -151,7 +169,6 @@ class TestUtils(base.BaseTaskTestCase):
 
     def test_validate_params_valid(self):
         shared_hardware_info = copy.deepcopy(HARDWARE_INFO)
-        shared_hardware_info['partition_name'] = 'shared'
         self.assertEqual(utils.validate_params(HARDWARE_INFO), shared_hardware_info)
 
     def test_validate_params_invalid(self):
@@ -179,6 +196,10 @@ class TestUtils(base.BaseTaskTestCase):
         self.assertRaises(cfg.ConfigFileValueError, utils.convert_to_hardware_thunder_conf,
                           DUPLICATE_PARTITION_HARDWARE_DEVICE_LIST)
 
+    def test_convert_to_hardware_thunder_conf_with_hmt(self):
+        self.assertEqual(utils.convert_to_hardware_thunder_conf(HARDWARE_INFO_WITH_HMT_ENABLED),
+                         RESULT_HMT_HARDWARE_DEVICE_LIST)
+
     @mock.patch('octavia.common.keystone.KeystoneSession')
     @mock.patch('a10_octavia.common.utils.keystone_client.Client')
     def test_get_parent_project_exists(self, mock_key_client, mock_get_session):
@@ -195,7 +216,7 @@ class TestUtils(base.BaseTaskTestCase):
         client_mock = mock.Mock()
         client_mock.projects.get.return_value = FakeProject()
         mock_key_client.return_value = client_mock
-        self.assertIsNone(utils.get_parent_project(a10constants.MOCK_CHILD_PROJECT_ID))
+        self.assertEqual(utils.get_parent_project(a10constants.MOCK_CHILD_PROJECT_ID), 'default')
 
     def test_get_net_info_from_cidr_valid(self):
         self.assertEqual(utils.get_net_info_from_cidr('10.10.10.1/32'),
@@ -241,14 +262,19 @@ class TestUtils(base.BaseTaskTestCase):
         self.assertEqual(utils.get_patched_ip_address('45', '10.10.0.0/24'), '10.10.0.45')
         self.assertEqual(utils.get_patched_ip_address('0.45', '10.10.0.0/24'), '10.10.0.45')
         self.assertEqual(utils.get_patched_ip_address('0.0.45', '10.10.0.0/24'), '10.10.0.45')
-        self.assertEqual(utils.get_patched_ip_address('1.0.0.23', '10.10.0.0/24'), '1.0.0.23')
         self.assertEqual(utils.get_patched_ip_address('.45', '10.10.0.0/24'), '10.10.0.45')
+        self.assertEqual(utils.get_patched_ip_address('11.45', '11.11.11.0/24'), '11.11.11.45')
+        self.assertEqual(utils.get_patched_ip_address('3.45', '11.11.2.0/23'), '11.11.3.45')
+        self.assertEqual(utils.get_patched_ip_address('3.45', '11.11.2.0/22'), '11.11.3.45')
 
     def test_get_patched_ip_address_invalid(self):
-        self.assertRaises(Exception, utils.get_patched_ip_address, 'abc.cef', '10.10.0.0/24')
-        self.assertRaises(Exception, utils.get_patched_ip_address, '11.10.0.11.10', '10.10.0.0/24')
-        self.assertRaises(Exception, utils.get_patched_ip_address, '10.333.11.10', '10.10.0.0/24')
-        self.assertRaises(Exception, utils.get_patched_ip_address, '1e.3d.4f.1o', '10.10.0.0/24')
+        vrid_exc = exceptions.VRIDIPNotInSubentRangeError
+        cfg_err = cfg.ConfigFileValueError
+        self.assertRaises(vrid_exc, utils.get_patched_ip_address, 'abc.cef', '10.10.0.0/24')
+        self.assertRaises(vrid_exc, utils.get_patched_ip_address, '.0.11.10', '10.10.0.0/24')
+        self.assertRaises(vrid_exc, utils.get_patched_ip_address, '1.0.0.23', '10.10.0.0/24')
+        self.assertRaises(cfg_err, utils.get_patched_ip_address, '10.333.11.10', '10.10.0.0/24')
+        self.assertRaises(cfg_err, utils.get_patched_ip_address, '1e.3d.4f.1o', '10.10.0.0/24')
 
     def test_get_vrid_floating_ip_for_project_with_only_local_config(self):
         vthunder = copy.deepcopy(VTHUNDER_1)
@@ -326,18 +352,18 @@ class TestUtils(base.BaseTaskTestCase):
                           utils.convert_interface_to_data_model, missing_ve_ip_in_iface_obj)
         ve_ips_collision_in_iface_obj = {"interface_num": 1,
                                          "vlan_map": [
-                                             {"vlan_id": 11, "use_dhcp": True, "ve_ip": "10.30"}]}
+                                             {"vlan_id": 11, "use_dhcp": "True", "ve_ip": "10.30"}]}
         self.assertRaises(exceptions.VirtEthCollisionConfigError,
                           utils.convert_interface_to_data_model, ve_ips_collision_in_iface_obj)
         missing_ve_ip_in_iface_obj = {"interface_num": 1,
                                       "vlan_map": [
-                                          {"vlan_id": 11, "use_dhcp": False}]}
+                                          {"vlan_id": 11, "use_dhcp": "False"}]}
         self.assertRaises(exceptions.VirtEthMissingConfigError,
                           utils.convert_interface_to_data_model, missing_ve_ip_in_iface_obj)
         duplicate_vlan_ids_in_iface_obj = {"interface_num": 1,
                                            "vlan_map": [
                                                {"vlan_id": 11, "ve_ip": "10.20"},
-                                               {"vlan_id": 11, "use_dhcp": True}]}
+                                               {"vlan_id": 11, "use_dhcp": "True"}]}
         self.assertRaises(exceptions.DuplicateVlanTagsConfigError,
                           utils.convert_interface_to_data_model, duplicate_vlan_ids_in_iface_obj)
 

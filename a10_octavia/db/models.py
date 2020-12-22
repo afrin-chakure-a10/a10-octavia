@@ -12,7 +12,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
 from oslo_db.sqlalchemy import models
 import sqlalchemy as sa
 from sqlalchemy.ext import orderinglist
@@ -48,7 +47,7 @@ class VThunder(base_models.BASE):
     created_at = sa.Column(u'created_at', sa.DateTime(), nullable=True)
     updated_at = sa.Column(u'updated_at', sa.DateTime(), nullable=True)
     partition_name = sa.Column(sa.String(14), nullable=True)
-    hierarchical_multitenancy = sa.Column(sa.Boolean(), default=False, nullable=True)
+    hierarchical_multitenancy = sa.Column(sa.String(7), nullable=False)
 
     @classmethod
     def find_by_loadbalancer_id(cls, loadbalancer_id, db_session=None):
@@ -64,3 +63,4 @@ class VRID(base_models.BASE):
     vrid = sa.Column(sa.Integer, default=0)
     vrid_port_id = sa.Column(sa.String(36), nullable=False)
     vrid_floating_ip = sa.Column(sa.String(40))
+    subnet_id = sa.Column(sa.String(36), nullable=False)

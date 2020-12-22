@@ -19,6 +19,7 @@ from taskflow import task
 
 import acos_client.errors as acos_errors
 
+from a10_octavia.common import openstack_mappings
 from a10_octavia.controller.worker.tasks.decorators import axapi_client_decorator
 from a10_octavia.controller.worker.tasks import utils
 
@@ -31,30 +32,62 @@ class MemberCreate(task.Task):
     """Task to create a member and associate to pool"""
 
     @axapi_client_decorator
-    def execute(self, member, vthunder, pool):
+    def execute(self, member, vthunder, pool, member_count_ip, flavor=None):
+        server_name = '{}_{}'.format(member.project_id[:5], member.ip_address.replace('.', '_'))
         server_args = utils.meta(member, 'server', {})
-        server_args['conn-limit'] = CONF.server.conn_limit
-        server_args['conn-resume'] = CONF.server.conn_resume
+        server_args = utils.dash_to_underscore(server_args)
+        server_args['conn_limit'] = CONF.server.conn_limit
+        server_args['conn_resume'] = CONF.server.conn_resume
+        # overwrite options from flavor
+        if flavor:
+            server_flavor = flavor.get('server')
+            if server_flavor:
+                name_exprs = server_flavor.get('name_expressions')
+                parsed_exprs = utils.parse_name_expressions(member.name, name_exprs)
+                server_flavor.pop('name_expressions', None)
+                server_args.update(server_flavor)
+                server_args.update(parsed_exprs)
         server_args = {'server': server_args}
+
         server_temp = {}
-        server_temp['template-server'] = CONF.server.template_server
+        template_server = CONF.server.template_server
+        if template_server and template_server.lower() != 'none':
+            if CONF.a10_global.use_shared_for_template_lookup:
+                LOG.warning('Shared partition template lookup for `[server]`'
+                            ' is not supported on template `template-server`')
+            server_temp = {'template-server': template_server}
+
         if not member.enabled:
             status = False
         else:
             status = True
 
         try:
-            self.axapi_client.slb.server.create(member.id, member.ip_address, status=status,
-                                                server_templates=server_temp,
-                                                axapi_args=server_args)
-            LOG.debug("Successfully created member: %s", member.id)
+            try:
+                self.axapi_client.slb.server.create(server_name, member.ip_address, status=status,
+                                                    server_templates=server_temp,
+                                                    **server_args)
+                LOG.debug("Successfully created member: %s", member.id)
+            except (acos_errors.Exists, acos_errors.AddressSpecifiedIsInUse):
+                self.axapi_client.slb.server.update(server_name, member.ip_address, status=status,
+                                                    server_templates=server_temp,
+                                                    **server_args)
         except (acos_errors.ACOSException, exceptions.ConnectionError) as e:
             LOG.exception("Failed to create member: %s", member.id)
             raise e
 
         try:
+            protocol = openstack_mappings.service_group_protocol(
+                self.axapi_client, pool.protocol)
+            self.axapi_client.slb.server.port.create(server_name, member.protocol_port, protocol,
+                                                     weight=member.weight)
+        except (acos_errors.ACOSException, exceptions.ConnectionError):
+            LOG.exception("Failed add port in member %s", member.id)
+            # no raise, it will still work even no port. but options for port will missing
+
+        try:
             self.axapi_client.slb.service_group.member.create(
-                pool.id, member.id, member.protocol_port)
+                pool.id, server_name, member.protocol_port)
             LOG.debug("Successfully associated member %s to pool %s",
                       member.id, pool.id)
         except (acos_errors.ACOSException, exceptions.ConnectionError) as e:
@@ -63,11 +96,14 @@ class MemberCreate(task.Task):
             raise e
 
     @axapi_client_decorator
-    def revert(self, member, vthunder, pool, *args, **kwargs):
+    def revert(self, member, vthunder, pool, member_count_ip, *args, **kwargs):
+        if member_count_ip > 1:
+            return
+        server_name = '{}_{}'.format(member.project_id[:5], member.ip_address.replace('.', '_'))
         try:
             LOG.warning("Reverting creation of member: %s for pool: %s",
                         member.id, pool.id)
-            self.axapi_client.slb.server.delete(member.id)
+            self.axapi_client.slb.server.delete(server_name)
         except exceptions.ConnectionError:
             LOG.exception("Failed to connect A10 Thunder device: %s", vthunder.ip_address)
         except Exception as e:
@@ -79,20 +115,30 @@ class MemberDelete(task.Task):
     """Task to delete member"""
 
     @axapi_client_decorator
-    def execute(self, member, vthunder, pool):
+    def execute(self, member, vthunder, pool, member_count_ip, member_count_ip_port_protocol):
+        server_name = '{}_{}'.format(member.project_id[:5], member.ip_address.replace('.', '_'))
         try:
             self.axapi_client.slb.service_group.member.delete(
-                pool.id, member.id, member.protocol_port)
+                pool.id, server_name, member.protocol_port)
             LOG.debug("Successfully dissociated member %s from pool %s", member.id, pool.id)
         except (acos_errors.ACOSException, exceptions.ConnectionError) as e:
             LOG.exception("Failed to dissociate member %s from pool %s",
                           member.id, pool.id)
             raise e
+
         try:
-            self.axapi_client.slb.server.delete(member.id)
-            LOG.debug("Successfully deleted member %s from pool %s", member.id, pool.id)
+            if member_count_ip <= 1:
+                self.axapi_client.slb.server.delete(server_name)
+                LOG.debug("Successfully deleted member %s from pool %s", member.id, pool.id)
+            elif member_count_ip_port_protocol <= 1:
+                protocol = openstack_mappings.service_group_protocol(
+                    self.axapi_client, pool.protocol)
+                self.axapi_client.slb.server.port.delete(server_name, member.protocol_port,
+                                                         protocol)
+                LOG.debug("Successfully deleted port for member %s from pool %s",
+                          member.id, pool.id)
         except (acos_errors.ACOSException, exceptions.ConnectionError) as e:
-            LOG.exception("Failed to delete member: %s", member.id)
+            LOG.exception("Failed to delete member/port: %s", member.id)
             raise e
 
 
@@ -100,23 +146,79 @@ class MemberUpdate(task.Task):
     """Task to update member"""
 
     @axapi_client_decorator
-    def execute(self, member, vthunder):
+    def execute(self, member, vthunder, pool, flavor=None):
+        server_name = '{}_{}'.format(member.project_id[:5], member.ip_address.replace('.', '_'))
         server_args = utils.meta(member, 'server', {})
-        server_args['conn-limit'] = CONF.server.conn_limit
-        server_args['conn-resume'] = CONF.server.conn_resume
+        server_args = utils.dash_to_underscore(server_args)
+        server_args['conn_limit'] = CONF.server.conn_limit
+        server_args['conn_resume'] = CONF.server.conn_resume
+        # overwrite options from flavor
+        if flavor:
+            server_flavor = flavor.get('server')
+            if server_flavor:
+                name_exprs = server_flavor.get('name_expressions')
+                parsed_exprs = utils.parse_name_expressions(member.name, name_exprs)
+                server_flavor.pop('name_expressions', None)
+                server_args.update(server_flavor)
+                server_args.update(parsed_exprs)
         server_args = {'server': server_args}
-        server_temp = {}
-        server_temp['template-server'] = CONF.server.template_server
+
+        template_server = CONF.server.template_server
+        if template_server and template_server.lower() == 'none':
+            template_server = None
+        server_temp = {'template-server': template_server}
+
+        port_list = None
+        curr_args = self.axapi_client.slb.server.get(server_name)
+        if 'server' in curr_args:
+            if 'port-list' in curr_args['server']:
+                port_list = curr_args['server']['port-list']
+
         if not member.enabled:
             status = False
         else:
             status = True
 
         try:
-            self.axapi_client.slb.server.update(member.id, member.ip_address, status=status,
-                                                server_templates=server_temp,
-                                                axapi_args=server_args)
+            port_list = self.axapi_client.slb.server.get(server_name)['server'].get('port-list')
+            self.axapi_client.slb.server.replace(server_name, member.ip_address, status=status,
+                                                 server_templates=server_temp,
+                                                 port_list=port_list,
+                                                 **server_args)
             LOG.debug("Successfully updated member: %s", member.id)
         except (acos_errors.ACOSException, exceptions.ConnectionError) as e:
             LOG.exception("Failed to update member: %s", member.id)
+            raise e
+
+        try:
+            protocol = openstack_mappings.service_group_protocol(
+                self.axapi_client, pool.protocol)
+            self.axapi_client.slb.server.port.update(server_name, member.protocol_port, protocol,
+                                                     weight=member.weight)
+        except (acos_errors.ACOSException, exceptions.ConnectionError):
+            LOG.exception("Failed add port in member %s", member.id)
+            # no raise, it will still work even no port. but options for port will missing
+
+
+class MemberDeletePool(task.Task):
+    """Task to delete member"""
+
+    @axapi_client_decorator
+    def execute(self, member, vthunder, pool, pool_count_ip, member_count_ip_port_protocol):
+        try:
+            server_name = '{}_{}'.format(member.project_id[:5], member.ip_address.replace('.', '_'))
+            if pool_count_ip <= 1:
+                self.axapi_client.slb.server.delete(server_name)
+                LOG.debug("Successfully deleted member %s from pool %s", member.id, pool.id)
+            elif member_count_ip_port_protocol <= 1:
+                protocol = openstack_mappings.service_group_protocol(
+                    self.axapi_client, pool.protocol)
+                self.axapi_client.slb.server.port.delete(server_name, member.protocol_port,
+                                                         protocol)
+                LOG.debug("Successfully deleted port for member %s from pool %s",
+                          member.id, pool.id)
+        except acos_errors.ACOSException:
+            pass
+        except exceptions.ConnectionError as e:
+            LOG.exception("Failed to delete member/port: %s", member.id)
             raise e

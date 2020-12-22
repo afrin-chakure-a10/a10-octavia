@@ -51,11 +51,14 @@ class PoolFlows(object):
         create_pool_flow.add(a10_database_tasks.GetVThunderByLoadBalancer(
             requires=constants.LOADBALANCER,
             provides=a10constants.VTHUNDER))
+        create_pool_flow.add(a10_database_tasks.GetFlavorData(
+            rebind={a10constants.LB_RESOURCE: constants.POOL},
+            provides=constants.FLAVOR))
         create_pool = service_group_tasks.PoolCreate(
-            requires=[constants.POOL, a10constants.VTHUNDER],
+            requires=[constants.POOL, a10constants.VTHUNDER, constants.FLAVOR],
             provides=constants.POOL)
         create_pool_flow.add(*self._get_sess_pers_subflow(create_pool))
-        create_pool_flow.add(virtual_port_tasks.ListenerUpdate(
+        create_pool_flow.add(virtual_port_tasks.ListenerUpdateForPool(
             requires=[constants.LOADBALANCER, constants.LISTENER, a10constants.VTHUNDER]))
         create_pool_flow.add(database_tasks.MarkPoolActiveInDB(
             requires=constants.POOL))
@@ -86,7 +89,7 @@ class PoolFlows(object):
         delete_pool_flow.add(a10_database_tasks.GetVThunderByLoadBalancer(
             requires=constants.LOADBALANCER,
             provides=a10constants.VTHUNDER))
-        delete_pool_flow.add(virtual_port_tasks.ListenerUpdate(
+        delete_pool_flow.add(virtual_port_tasks.ListenerUpdateForPool(
             requires=[constants.LOADBALANCER, constants.LISTENER, a10constants.VTHUNDER]))
         delete_pool_flow.add(persist_tasks.DeleteSessionPersistence(
             requires=[a10constants.VTHUNDER, constants.POOL]))
@@ -123,8 +126,9 @@ class PoolFlows(object):
             delete_member_vthunder_subflow.add(
                 self.member_flow.get_delete_member_vthunder_internal_subflow(member.id))
         if members:
+            store.update({a10constants.MEMBER_LIST: members})
             delete_member_vthunder_subflow.add(
-                self.member_flow.get_delete_member_vrid_internal_subflow(members[-1].id))
+                self.member_flow.get_delete_member_vrid_internal_subflow())
         store.update(member_store)
         return delete_member_vthunder_subflow
 
@@ -143,11 +147,15 @@ class PoolFlows(object):
         update_pool_flow.add(a10_database_tasks.GetVThunderByLoadBalancer(
             requires=constants.LOADBALANCER,
             provides=a10constants.VTHUNDER))
+        update_pool_flow.add(a10_database_tasks.GetFlavorData(
+            rebind={a10constants.LB_RESOURCE: constants.POOL},
+            provides=constants.FLAVOR))
         update_pool = service_group_tasks.PoolUpdate(
-            requires=[constants.POOL, a10constants.VTHUNDER, constants.UPDATE_DICT],
+            requires=[constants.POOL, a10constants.VTHUNDER,
+                      constants.UPDATE_DICT, constants.FLAVOR],
             provides=constants.POOL)
         update_pool_flow.add(*self._get_sess_pers_subflow(update_pool))
-        update_pool_flow.add(virtual_port_tasks.ListenerUpdate(
+        update_pool_flow.add(virtual_port_tasks.ListenerUpdateForPool(
             requires=[constants.LOADBALANCER, constants.LISTENER, a10constants.VTHUNDER]))
         update_pool_flow.add(database_tasks.UpdatePoolInDB(
             requires=[constants.POOL, constants.UPDATE_DICT]))

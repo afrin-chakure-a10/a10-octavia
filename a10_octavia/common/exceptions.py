@@ -13,11 +13,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from keystone import exception as keystone_exceptions
 from oslo_config import cfg
 
 from octavia.common import exceptions
 from octavia.i18n import _
 from octavia.network import base
+
+import acos_client.errors as acos_errors
 
 
 class NoDatabaseURL(exceptions.OctaviaException):
@@ -37,7 +40,11 @@ class AllocateTrunkException(base.NetworkException):
 
 
 class VRIDIPNotInSubentRangeError(base.NetworkException):
-    pass
+    def __init__(self, vrid_ip, subnet):
+        msg = ('Invalid VRID floating IP specified. ' +
+               'VRID IP {0} out of range ' +
+               'for subnet {1}.').format(vrid_ip, subnet)
+        super(VRIDIPNotInSubentRangeError, self).__init__(msg)
 
 
 class MissingVlanIDConfigError(cfg.ConfigFileValueError):
@@ -135,9 +142,27 @@ class MissingMgmtIpConfigError(cfg.ConfigFileValueError):
 class InvalidVCSDeviceCount(cfg.ConfigFileValueError):
 
     def __init__(self, device_count):
-        msg = ('Number of devices in config is should be 1 when VCS is not enabled, ' +
+        msg = ('Number of devices in config should be 1 when VCS is not enabled, ' +
                'provided {0}').format(device_count)
         super(InvalidVCSDeviceCount, self).__init__(msg=msg)
+
+
+class ThunderInUseByExistingProjectError(cfg.ConfigFileValueError):
+
+    def __init__(self, config_ip_part, existing_ip_part, project_id):
+        msg = ('Given IPAddress:Partition `{0}` in a10-octavia.conf is invalid. '
+               'The project `{2}` is using IPAddress:Partition `{1}` already.').format(
+            config_ip_part, existing_ip_part, project_id)
+        super(ThunderInUseByExistingProjectError, self).__init__(msg=msg)
+
+
+class ProjectInUseByExistingThunderError(cfg.ConfigFileValueError):
+
+    def __init__(self, config_ip_part, existing_project_id, project_id):
+        msg = ('Given project_id `{2}` in a10-octavia.conf is invalid. '
+               'The given IPAddress:Partition `{0}` is getting used for project {1} '
+               'already.').format(config_ip_part, existing_project_id, project_id)
+        super(ProjectInUseByExistingThunderError, self).__init__(msg=msg)
 
 
 class MissingVCSDeviceConfig(base.NetworkException):
@@ -145,3 +170,38 @@ class MissingVCSDeviceConfig(base.NetworkException):
         msg = ('Device ids {0} provided in config are not present in VCS' +
                'cluster.').format(device_ids)
         super(MissingVCSDeviceConfig, self).__init__(msg=msg)
+
+
+class SNATConfigurationError(acos_errors.ACOSException):
+    def __init__(self):
+        msg = ('SNAT configuration does not work in DSR mode on Thunder '
+               ' `autosnat` and `no_dest_nat` both are set True under `[listener]` '
+               'section in a10-octavia.conf. ')
+        super(SNATConfigurationError, self).__init__(msg=msg)
+
+
+class PartitionNotActiveError(acos_errors.ACOSException):
+    """ Occurs when the partition has been unloaded, but not deleted """
+
+    def __init__(self, partition_name, device_ip):
+        msg = ('Partition {0} on device {1} is set to Not-Active').format(partition_name,
+                                                                          device_ip)
+        super(PartitionNotActiveError, self).__init__(msg=msg)
+
+
+class ParentProjectNotFound(keystone_exceptions.Error):
+    """Occurs if no parent project found."""
+
+    def __init__(self, project_id):
+        msg = ('The project {0} does not have a parent or has default project'
+               ' as parent. ').format(project_id)
+        super(ParentProjectNotFound, self).__init__(message=msg)
+
+
+class SharedPartitionTemplateNotSupported(acos_errors.FeatureNotSupported):
+    """ Occurs when shared partition lookup for templates is not supported on acos client"""
+
+    def __init__(self, resource, template_key):
+        msg = ('Shared partition template lookup for [{0}] is not supported'
+               ' on template `{1}`').format(resource, template_key)
+        super(SharedPartitionTemplateNotSupported, self).__init__(code=505, msg=msg)

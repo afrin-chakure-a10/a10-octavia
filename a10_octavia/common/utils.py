@@ -24,6 +24,7 @@ import struct
 from oslo_config import cfg
 from oslo_log import log as logging
 
+from keystoneauth1.exceptions import http as keystone_exception
 from keystoneclient.v3 import client as keystone_client
 from octavia.common import keystone
 from stevedore import driver as stevedore_driver
@@ -78,8 +79,9 @@ def validate_params(hardware_info):
 def check_duplicate_entries(hardware_dict):
     hardware_count_dict = {}
     for hardware_device in hardware_dict.values():
-        candidate = '{}:{}'.format(hardware_device.ip_address, hardware_device.partition_name)
-        hardware_count_dict[candidate] = hardware_count_dict.get(candidate, 0) + 1
+        if hardware_device.hierarchical_multitenancy != "enable":
+            candidate = '{}:{}'.format(hardware_device.ip_address, hardware_device.partition_name)
+            hardware_count_dict[candidate] = hardware_count_dict.get(candidate, 0) + 1
     return [k for k, v in hardware_count_dict.items() if v > 1]
 
 
@@ -88,31 +90,48 @@ def convert_to_hardware_thunder_conf(hardware_list):
     hardware_dict = {}
     for hardware_device in hardware_list:
         hardware_device = validate_params(hardware_device)
-        if hardware_dict.get(hardware_device['project_id']):
-            raise cfg.ConfigFileValueError('Supplied duplicate project_id ' +
-                                           hardware_device['project_id'] +
-                                           ' in [hardware_thunder] section')
+        project_id = hardware_device['project_id']
+        if hardware_dict.get(project_id):
+            raise cfg.ConfigFileValueError('Supplied duplicate project_id {} '
+                                           ' in [hardware_thunder] section'.format(project_id))
         hardware_device['undercloud'] = True
         if hardware_device.get('interface_vlan_map'):
             hardware_device['device_network_map'] = validate_interface_vlan_map(hardware_device)
             del hardware_device['interface_vlan_map']
+        hierarchical_mt = hardware_device.get('hierarchical_multitenancy')
+        if hierarchical_mt == "enable":
+            hardware_device["partition_name"] = project_id[0:14]
+        if hierarchical_mt and hierarchical_mt not in ('enable', 'disable'):
+            raise cfg.ConfigFileValueError('Option `hierarchical_multitenancy` specified '
+                                           'under project id {} only accepts "enable" and '
+                                           '"disable"'.format(project_id))
         vthunder_conf = data_models.HardwareThunder(**hardware_device)
-        hardware_dict[hardware_device['project_id']] = vthunder_conf
-
-    duplicates_list = check_duplicate_entries(hardware_dict)
-    if duplicates_list:
-        raise cfg.ConfigFileValueError('Duplicates found for the following '
-                                       '\'ip_address:partition_name\' entries: {}'
-                                       .format(list(duplicates_list)))
+        hardware_dict[project_id] = vthunder_conf
+        duplicates = check_duplicate_entries(hardware_dict)
+        if duplicates:
+            raise cfg.ConfigFileValueError('Duplicates found for the following '
+                                           '\'ip_address:partition_name\' entries: {}'
+                                           .format(list(duplicates)))
     return hardware_dict
+
+
+def get_parent_project_list():
+    parent_project_list = []
+    for project_id in CONF.hardware_thunder.devices:
+        parent_project_id = get_parent_project(project_id)
+        if parent_project_id != 'default':
+            parent_project_list.append(parent_project_id)
+    return parent_project_list
 
 
 def get_parent_project(project_id):
     key_session = keystone.KeystoneSession().get_session()
     key_client = keystone_client.Client(session=key_session)
-    project = key_client.projects.get(project_id)
-    if project.parent_id != 'default':
+    try:
+        project = key_client.projects.get(project_id)
         return project.parent_id
+    except keystone_exception.NotFound:
+        return None
 
 
 def get_axapi_client(vthunder):
@@ -160,15 +179,43 @@ def get_network_driver():
 
 
 def get_patched_ip_address(ip, cidr):
-    host_ip = ip.lstrip('.')
-    octets = host_ip.split('.')
+    net_ip, netmask = get_net_info_from_cidr(cidr)
+    octets = ip.lstrip('.').split('.')
+
     if len(octets) == 4:
         validate_ipv4(ip)
-        return ip
-    for idx in range(4 - len(octets)):
+        if check_ip_in_subnet_range(ip, net_ip, netmask):
+            return ip
+        else:
+            raise exceptions.VRIDIPNotInSubentRangeError(ip, cidr)
+
+    for i in range(4 - len(octets)):
         octets.insert(0, '0')
     host_ip = '.'.join(octets)
-    return merge_host_and_network_ip(cidr, host_ip)
+
+    try:
+        int_host_ip = struct.unpack('>L', socket.inet_aton(host_ip))[0]
+    except socket.error:
+        raise exceptions.VRIDIPNotInSubentRangeError(host_ip, cidr)
+
+    int_net_ip = struct.unpack('>L', socket.inet_aton(net_ip))[0]
+    int_netmask = struct.unpack('>L', socket.inet_aton(netmask))[0]
+
+    # Create a set of test bits to find partial netmask octet
+    # ie 1.1.1.1 & 255.255.254.0 -> 1.1.0.0
+    test_bits = (1 << 24 | 1 << 16 | 1 << 8 | 1)
+    test_bits = (int_netmask & test_bits)
+
+    # Then shift 8 bits (1 -> 256) and subtract by 1 in each octet to get 255
+    test_bits = (test_bits << 8) - test_bits
+
+    # Use truncated mask to fill in any missing octets of partial IP
+    canidate_ip = (test_bits & int_net_ip) | int_host_ip
+
+    if (canidate_ip & int_netmask) != (int_net_ip & int_netmask):
+        raise exceptions.VRIDIPNotInSubentRangeError(host_ip, cidr)
+
+    return socket.inet_ntoa(struct.pack('>L', canidate_ip))
 
 
 def get_vrid_floating_ip_for_project(project_id):
@@ -213,14 +260,14 @@ def convert_interface_to_data_model(interface_obj):
             raise exceptions.InvalidVlanIdConfigError(vlan_id)
         if vlan_id in interface_dm.tags:
             raise exceptions.DuplicateVlanTagsConfigError(interface_num, vlan_id)
-        if vlan_map.get('use_dhcp'):
-            if not vlan_map.get('use_dhcp') in ("True", "False"):
-                raise exceptions.InvalidUseDhcpConfigError(vlan_map.get('use_dhcp'))
+        if vlan_map.get('use_dhcp') and vlan_map.get('use_dhcp') not in ("True", "False"):
+            raise exceptions.InvalidUseDhcpConfigError(vlan_map.get('use_dhcp'))
+        if vlan_map.get('use_dhcp') == 'True':
             if vlan_map.get('ve_ip'):
                 raise exceptions.VirtEthCollisionConfigError(interface_num, vlan_id)
             else:
                 interface_dm.ve_ips.append('dhcp')
-        else:
+        if not vlan_map.get('use_dhcp') or vlan_map.get('use_dhcp') == 'False':
             if not vlan_map.get('ve_ip'):
                 raise exceptions.VirtEthMissingConfigError(interface_num, vlan_id)
             interface_dm.ve_ips.append(validate_partial_ipv4(vlan_map.get('ve_ip')))

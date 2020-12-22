@@ -34,6 +34,7 @@ from a10_octavia.common import a10constants
 from a10_octavia.common import exceptions
 from a10_octavia.common import openstack_mappings
 from a10_octavia.common import utils as a10_utils
+from a10_octavia.controller.worker.tasks.decorators import activate_partition
 from a10_octavia.controller.worker.tasks.decorators import axapi_client_decorator
 from a10_octavia.controller.worker.tasks.decorators import device_context_switch_decorator
 
@@ -352,15 +353,22 @@ class HandleACOSPartitionChange(VThunderBaseTask):
     """Task to switch to specified partition"""
 
     def execute(self, vthunder):
+        axapi_client = a10_utils.get_axapi_client(vthunder)
         try:
-            axapi_client = a10_utils.get_axapi_client(vthunder)
-            if not axapi_client.system.partition.exists(vthunder.partition_name):
+            partition = axapi_client.system.partition.get(vthunder.partition_name)
+        except acos_errors.NotFound:
+            partition = None
+
+        if partition is None:
+            try:
                 axapi_client.system.partition.create(vthunder.partition_name)
                 axapi_client.system.action.write_memory(partition="shared")
                 LOG.info("Partition %s created", vthunder.partition_name)
-        except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
-            LOG.exception("Failed to create parition on vThunder: %s", str(e))
-            raise e
+            except (acos_errors.ACOSException, req_exceptions.ConnectionError) as e:
+                LOG.exception("Failed to create parition on vThunder: %s", str(e))
+                raise e
+        elif partition.get("status") == "Not-Active":
+            raise exceptions.PartitionNotActiveError(partition, vthunder.ip_address)
 
 
 class SetupDeviceNetworkMap(VThunderBaseTask):
@@ -459,6 +467,8 @@ class TagInterfaceBaseTask(VThunderBaseTask):
             device_obj = vthunder.device_network_map[1]
             client = acos_client.Client(device_obj.mgmt_ip_address, api_ver,
                                         vthunder.username, vthunder.password, timeout=30)
+            if vthunder.partition_name != "shared":
+                activate_partition(client, vthunder.partition_name)
             close_axapi_client = True
         else:
             client = self.axapi_client
@@ -590,7 +600,7 @@ class TagInterfaceBaseTask(VThunderBaseTask):
                         str(create_vlan_id))
 
     def tag_interfaces(self, vthunder, create_vlan_id):
-        if vthunder.device_network_map:
+        if vthunder and vthunder.device_network_map:
             network_list = self.network_driver.list_networks()
             vlan_subnet_id_dict = {}
             for network in network_list:
@@ -652,7 +662,7 @@ class TagInterfaceForLB(TagInterfaceBaseTask):
     @axapi_client_decorator
     def revert(self, loadbalancer, vthunder, *args, **kwargs):
         try:
-            if vthunder.device_network_map:
+            if vthunder and vthunder.device_network_map:
                 vlan_id = self.get_vlan_id(loadbalancer.vip.subnet_id, False)
                 if self.is_vlan_deletable():
                     LOG.warning("Revert TagInterfaceForLB with VLAN id %s", vlan_id)
@@ -695,7 +705,7 @@ class TagInterfaceForMember(TagInterfaceBaseTask):
                         "Skipping TagInterfaceForMember task", member.id)
             return
         try:
-            if vthunder.device_network_map:
+            if vthunder and vthunder.device_network_map:
                 vlan_id = self.get_vlan_id(member.subnet_id, False)
                 if self.is_vlan_deletable():
                     LOG.warning("Reverting tag interface for member with VLAN id %s", vlan_id)
@@ -716,7 +726,7 @@ class DeleteInterfaceTagIfNotInUseForLB(TagInterfaceBaseTask):
     @axapi_client_decorator
     def execute(self, loadbalancer, vthunder):
         try:
-            if vthunder.device_network_map:
+            if vthunder and vthunder.device_network_map:
                 vlan_id = self.get_vlan_id(loadbalancer.vip.subnet_id, False)
                 if self.is_vlan_deletable():
                     master_device_id = vthunder.device_network_map[0].vcs_device_id
@@ -740,7 +750,7 @@ class DeleteInterfaceTagIfNotInUseForMember(TagInterfaceBaseTask):
                         "Skipping DeleteInterfaceTagIfNotInUseForMember task", member.id)
             return
         try:
-            if vthunder.device_network_map:
+            if vthunder and vthunder.device_network_map:
                 vlan_id = self.get_vlan_id(member.subnet_id, False)
                 if self.is_vlan_deletable():
                     master_device_id = vthunder.device_network_map[0].vcs_device_id
@@ -757,10 +767,10 @@ class WriteMemory(VThunderBaseTask):
     """Task to write memory of the Thunder device"""
 
     @axapi_client_decorator
-    def execute(self, vthunder):
+    def execute(self, vthunder, write_mem_shared_part=False):
         try:
             if vthunder:
-                if vthunder.partition_name != "shared":
+                if vthunder.partition_name != "shared" and not write_mem_shared_part:
                     self.axapi_client.system.action.write_memory(
                         partition="specified",
                         specified_partition=vthunder.partition_name)
