@@ -32,6 +32,7 @@ from a10_octavia.tests.unit import base
 
 VTHUNDER = data_models.VThunder()
 LB = o_data_models.LoadBalancer(id=a10constants.MOCK_LOAD_BALANCER_ID)
+UPDATE_DICT = {}
 
 
 class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
@@ -59,7 +60,10 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
     def _create_shared_template(self, template_type, template_config,
                                 mock_protocol, mock_templates):
         template_type = template_type.lower()
-        mock_templates.return_value = 'template-{}-shared'.format(template_type)
+        if template_type == "https":
+            mock_templates.return_value = 'template-http-shared'
+        else:
+            mock_templates.return_value = 'template-{}-shared'.format(template_type)
         listener = self._mock_listener(template_type.upper(), 1000)
         mock_protocol.return_value = listener.protocol
 
@@ -86,6 +90,18 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
         vthunder.partition_name = "my_partition"
         listener_task, listener = self._create_shared_template(
             'http', {'template_http': 'temp1'}, mock_protocol, mock_templates)
+        listener_task.execute(LB, listener, vthunder)
+        args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
+        self.assertIn('template-http-shared', kwargs['virtual_port_templates'])
+
+    @mock.patch('a10_octavia.controller.worker.tasks.utils.shared_template_modifier')
+    @mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol')
+    def test_create_https_listener_with_template_http_shared(self, mock_protocol, mock_templates):
+        vthunder = copy.deepcopy(VTHUNDER)
+        vthunder.partition_name = "my_partition"
+        listener_task, listener = self._create_shared_template(
+            'https', {'template_http': 'temp1'}, mock_protocol, mock_templates)
+        listener.tls_certificate_id = a10constants.MOCK_TLS_CERTIFICATE_ID
         listener_task.execute(LB, listener, vthunder)
         args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
         self.assertIn('template-http-shared', kwargs['virtual_port_templates'])
@@ -130,6 +146,18 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
         vthunder.partition_name = "shared"
         listener_task, listener = self._create_shared_template(
             'http', {'template_http': 'temp1'}, mock_protocol, mock_templates)
+        listener_task.execute(LB, listener, vthunder)
+        args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
+        self.assertIn('template-http', kwargs['virtual_port_templates'])
+
+    @mock.patch('a10_octavia.controller.worker.tasks.utils.shared_template_modifier')
+    @mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol')
+    def test_create_https_listener_with_template_http(self, mock_protocol, mock_templates):
+        vthunder = copy.deepcopy(VTHUNDER)
+        vthunder.partition_name = "shared"
+        listener_task, listener = self._create_shared_template(
+            'https', {'template_http': 'temp1'}, mock_protocol, mock_templates)
+        listener.tls_certificate_id = a10constants.MOCK_TLS_CERTIFICATE_ID
         listener_task.execute(LB, listener, vthunder)
         args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
         self.assertIn('template-http', kwargs['virtual_port_templates'])
@@ -251,6 +279,36 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
         self.assertIn('conn_limit', kwargs['port'])
         self.assertEqual(kwargs['port'].get('conn_limit'), 300)
 
+    def test_crete_virtual_port_with_snat_flavor(self):
+        listener = self._mock_listener('HTTP', 1000)
+        flavor = {"nat_pool": {"pool_name": "p1", "start-address": "1"}}
+
+        listener_task = task.ListenerCreate()
+        listener_task.axapi_client = self.client_mock
+
+        with mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol',
+                        return_value=listener.protocol):
+            listener_task.execute(LB, listener, VTHUNDER, flavor)
+
+        args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
+        self.assertIn('pool', kwargs['port'])
+        self.assertEqual(kwargs['port'].get('pool'), "p1")
+
+    def test_crete_virtual_port_with_vport_flavor_over_snat(self):
+        listener = self._mock_listener('HTTP', 1000)
+        flavor = {"nat_pool": {"pool_name": "p1"}, "virtual_port": {"pool": "p2"}}
+
+        listener_task = task.ListenerCreate()
+        listener_task.axapi_client = self.client_mock
+
+        with mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol',
+                        return_value=listener.protocol):
+            listener_task.execute(LB, listener, VTHUNDER, flavor_data=flavor)
+
+        args, kwargs = self.client_mock.slb.virtual_server.vport.create.call_args
+        self.assertIn('pool', kwargs['port'])
+        self.assertEqual(kwargs['port'].get('pool'), "p2")
+
     def test_update_http_virtual_port_use_rcv_hop(self):
         listener = self._mock_listener('HTTP', 1000)
 
@@ -329,7 +387,7 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
 
         with mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol',
                         return_value=listener.protocol):
-            listener_task.execute(LB, listener, VTHUNDER, flavor)
+            listener_task.execute(LB, listener, VTHUNDER, flavor, UPDATE_DICT)
 
         args, kwargs = self.client_mock.slb.virtual_server.vport.replace.call_args
         self.assertIn('conn_limit', kwargs['port'])
@@ -382,3 +440,37 @@ class TestHandlerVirtualPortTasks(base.BaseTaskTestCase):
                                                                             listener.protocol_port,
                                                                             listener.default_pool_id
                                                                             )
+
+    def test_set_http_virtual_port_conn_limit_with_cli(self):
+        listener = self._mock_listener('HTTP', 1000)
+        flavor = {}
+        update_dict = {"connection_limit": 1000}
+
+        listener_task = task.ListenerUpdate()
+        listener_task.axapi_client = self.client_mock
+        self.conf.config(group=a10constants.LISTENER_CONF_SECTION,
+                         conn_limit=200)
+        listener_task.CONF = self.conf
+
+        with mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol',
+                        return_value=listener.protocol):
+            listener_task.execute(LB, listener, VTHUNDER, flavor, update_dict)
+
+        args, kwargs = self.client_mock.slb.virtual_server.vport.replace.call_args
+        self.assertEqual(kwargs['conn_limit'], 1000)
+
+    def test_set_http_virtual_port_conn_limit_with_config(self):
+        listener = self._mock_listener('HTTP', 1000)
+
+        listener_task = task.ListenerUpdate()
+        listener_task.axapi_client = self.client_mock
+        self.conf.config(group=a10constants.LISTENER_CONF_SECTION,
+                         conn_limit=200)
+        listener_task.CONF = self.conf
+
+        with mock.patch('a10_octavia.common.openstack_mappings.virtual_port_protocol',
+                        return_value=listener.protocol):
+            listener_task.execute(LB, listener, VTHUNDER, UPDATE_DICT)
+
+        args, kwargs = self.client_mock.slb.virtual_server.vport.replace.call_args
+        self.assertEqual(kwargs['conn_limit'], 200)

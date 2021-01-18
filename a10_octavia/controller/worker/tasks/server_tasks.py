@@ -222,3 +222,26 @@ class MemberDeletePool(task.Task):
         except exceptions.ConnectionError as e:
             LOG.exception("Failed to delete member/port: %s", member.id)
             raise e
+
+
+class MemberFindNatPool(task.Task):
+
+    @axapi_client_decorator
+    def execute(self, member, vthunder, pool, flavor=None):
+        if flavor is None:
+            return
+
+        pool_flavor = flavor.get('nat_pool')
+        pools_flavor = flavor.get('nat_pool_list')
+        if pool_flavor or pools_flavor:
+            for listener in pool.listeners:
+                vport = self.axapi_client.slb.virtual_server.vport.get(pool.load_balancer.id,
+                                                                       listener.id,
+                                                                       listener.protocol,
+                                                                       listener.protocol_port)
+                if vport and 'port' in vport and 'pool' in vport['port']:
+                    if pool_flavor and vport['port']['pool'] == pool_flavor['pool_name']:
+                        return pool_flavor
+                    for flavor in (pools_flavor or []):
+                        if vport['port']['pool'] == flavor['pool_name']:
+                            return flavor

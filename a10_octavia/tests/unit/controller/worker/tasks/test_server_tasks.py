@@ -38,7 +38,8 @@ POOL = o_data_models.Pool(id=a10constants.MOCK_POOL_ID,
                           protocol=a10constants.MOCK_SERVICE_GROUP_PROTOCOL)
 MEMBER = o_data_models.Member(
     id=a10constants.MOCK_MEMBER_ID, protocol_port=t_constants.MOCK_PORT_ID,
-    project_id=t_constants.MOCK_PROJECT_ID, ip_address=t_constants.MOCK_IP_ADDRESS)
+    project_id=t_constants.MOCK_PROJECT_ID, ip_address=t_constants.MOCK_IP_ADDRESS,
+    subnet_id=a10constants.MOCK_SUBNET_ID)
 
 KEY_ARGS = {'server': utils.meta(MEMBER, 'server', {'conn_resume': None, 'conn_limit': 64000000})}
 SERVER_NAME = '{}_{}'.format(MEMBER.project_id[:5],
